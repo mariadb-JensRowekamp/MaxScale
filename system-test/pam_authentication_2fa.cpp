@@ -31,6 +31,7 @@ string generate_2fa_token(TestConnections& test, const string& secret);
 int main(int argc, char** argv)
 {
     TestConnections test(argc, argv);
+    test.maxscales->ssl = false;
     test.repl->connect();
     delete_slave_binlogs(test);
 
@@ -63,8 +64,8 @@ account         required        pam_unix.so
 
     const string gauth_secret_key = "3C7OP37ONKJOELVIMNZ67AADSY";
     const string gauth_keyfile_contents = gauth_secret_key + "\n" +
-R"(" RATE_LIMIT 3 30
-" TOTP_AUTH
+R"(\" RATE_LIMIT 3 30
+\" TOTP_AUTH
 74865607
 49583434
 76566817
