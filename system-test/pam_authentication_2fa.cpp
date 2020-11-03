@@ -191,11 +191,12 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
 
     if (db)
     {
-        printf("Trying to log in to [%s]:%i as %s with database %s.\n", host, port, user.c_str(), db);
+        test.tprintf("Trying to log in to [%s]:%i as %s with database %s.\n", host, port, user.c_str(), db);
     }
     else
     {
-        printf("Trying to log in to [%s]:%i as %s.\n", host, port, user.c_str());
+        test.tprintf("Trying to log in to [%s]:%i as %s, with passwords '%s' and '%s'.\n",
+               host, port, user.c_str(), pass.c_str(), pass2.c_str());
     }
 
     bool rval = false;
