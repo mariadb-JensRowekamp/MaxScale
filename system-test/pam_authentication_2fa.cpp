@@ -206,6 +206,7 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
     auto file = popen(cmd.c_str(), "w"); // can only write to the pipe
     if (file)
     {
+        fprintf(file, "%s\n", pass2.c_str());
         fprintf(file, "select rand();\n");
         fprintf(file, "exit\n");
         int rc = pclose(file);
@@ -216,7 +217,7 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
         }
         else
         {
-                cout << "Login failed \n";
+            cout << "Login failed \n";
         }
     }
     return rval;
@@ -237,10 +238,10 @@ string generate_2fa_token(TestConnections& test, const string& secret)
         int rc = pclose(stream);
         // 2FA tokens are six numbers long.
         int output_len = strlen(buf);
-        int expected_len = 6;
-        if (output_len == expected_len)
+        int token_len = 6;
+        if (output_len == token_len + 1)
         {
-            rval = buf;
+            rval.assign(buf, buf + token_len);
         }
         else
         {
