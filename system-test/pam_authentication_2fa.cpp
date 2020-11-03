@@ -207,8 +207,11 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
     auto file = popen(cmd.c_str(), "w"); // can only write to the pipe
     if (file)
     {
+        sleep(2);
         fprintf(file, "%s\n", pass2.c_str());
+        sleep(2);
         fprintf(file, "select rand();\n");
+        sleep(2);
         fprintf(file, "exit\n");
         int rc = pclose(file);
         if (rc == 0)
