@@ -202,17 +202,24 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
     bool rval = false;
     // Using two passwords is a bit tricky as connector-c does not have a setting for it. Instead, invoke
     // mysql from the commandline.
-    auto cmd = mxb::string_printf("mysql --host=%s --port=%i --user=%s --password=%s",
-                                  host, port, user.c_str(), pass.c_str());
-    auto file = popen(cmd.c_str(), "w"); // can only write to the pipe
+    auto url = mxb::string_printf("jdbc:mariadb://%s:%i/?user=%s&password=%s&password2=%s",
+                                  host, port, user.c_str(), pass.c_str(), pass2.c_str());
+    auto java_cmd = mxb::string_printf("java -jar ConnectionTester.jar '%s'", url.c_str());
+    auto file = popen(java_cmd.c_str(), "r");
     if (file)
     {
         sleep(2);
-        fprintf(file, "%s\n", pass2.c_str());
-        sleep(2);
-        fprintf(file, "select rand();\n");
-        sleep(2);
-        fprintf(file, "exit\n");
+        char buffer[10240];
+        size_t rsize = sizeof(buffer);
+        auto result = (char*)calloc(rsize, sizeof(char));
+
+        while (fgets(buffer, sizeof(buffer), file))
+        {
+            result = (char*)realloc(result, sizeof(buffer) + rsize);
+            rsize += sizeof(buffer);
+            strcat(result, buffer);
+        }
+
         int rc = pclose(file);
         if (rc == 0)
         {
