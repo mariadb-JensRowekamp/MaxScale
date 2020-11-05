@@ -20,6 +20,7 @@
 
 using std::string;
 using std::cout;
+using mxb::string_printf;
 using mxt::ServerInfo;
 
 // Helper function for checking PAM-login. If db is empty, log to null database.
@@ -43,14 +44,11 @@ int main(int argc, char** argv)
     const char pam_config_name[] = "twofactor_conf";
 
     const string add_user_cmd = (string)"useradd " + pam_user;
-    const string add_pw_cmd = (string)"echo " + pam_user + ":" + pam_pw + " | chpasswd";
+    const string add_pw_cmd = mxb::string_printf("printf \"%s:%s\" | chpasswd", pam_user, pam_pw);
     const string read_shadow = "chmod o+r /etc/shadow";
 
     const string remove_user_cmd = (string)"userdel --remove " + pam_user;
     const string read_shadow_off = "chmod o-r /etc/shadow";
-
-    // To make most out of this test, use a custom pam service configuration. It needs to be written to
-    // all backends.
 
     const string pam_config_file = (string)"/etc/pam.d/" + pam_config_name;
 
@@ -58,7 +56,7 @@ int main(int argc, char** argv)
     // testing the security of the google authenticator itself.
     const string pam_config_contents = R"(
 auth            required        pam_unix.so
-auth            required        pam_google_authenticator.so nullok no_strict_owner allowed_perm=0777 secret=/tmp/.google_authenticator
+auth            required        pam_google_authenticator.so nullok allowed_perm=0777 secret=/tmp/.google_authenticator
 account         required        pam_unix.so
 )";
 
@@ -71,13 +69,17 @@ R"(\" RATE_LIMIT 3 30
 76566817
 48621211
 71963974)";
-    const string gauth_secret_path = "/tmp/.google_authenticator";
+    const char gauth_secret_path[] = "/tmp/.google_authenticator";
 
-    const string create_pam_conf_cmd = "printf \"" + pam_config_contents + "\" > " + pam_config_file;
+    const char write_file_fmt[] = "printf \"%s\" > %s";
+    const string create_pam_conf_cmd = string_printf(write_file_fmt,
+                                                     pam_config_contents.c_str(), pam_config_file.c_str());
     const string delete_pam_conf_cmd = "rm -f " + pam_config_file;
 
-    const string create_2fa_secret_cmd = "printf \"" + gauth_keyfile_contents + "\" > " + gauth_secret_path;
-    const string delete_2fa_secret_cmd = "rm -f " + gauth_secret_path;
+    const string create_2fa_secret_cmd = string_printf(write_file_fmt,
+                                                       gauth_keyfile_contents.c_str(), gauth_secret_path);
+    const string chown_2fa_secret_cmd = string_printf("chown %s %s", pam_user, gauth_secret_path);
+    const string delete_2fa_secret_cmd = (string)"rm -f " + gauth_secret_path;
 
     const int N = 2;
     auto cleanup = [&]() {
@@ -111,6 +113,7 @@ R"(\" RATE_LIMIT 3 30
             test.repl->ssh_node_f(i, true, "%s", read_shadow.c_str());
             test.repl->ssh_node_f(i, true, "%s", create_pam_conf_cmd.c_str());
             test.repl->ssh_node_f(i, true, "%s", create_2fa_secret_cmd.c_str());
+            test.repl->ssh_node_f(i, true, "%s", chown_2fa_secret_cmd.c_str());
         }
 
         // Create the user on the node running MaxScale, as the MaxScale PAM plugin compares against
@@ -120,6 +123,7 @@ R"(\" RATE_LIMIT 3 30
         test.maxscales->ssh_node_f(0, true, "%s", read_shadow.c_str());
         test.maxscales->ssh_node_f(0, true, "%s", create_pam_conf_cmd.c_str());
         test.maxscales->ssh_node_f(0, true, "%s", create_2fa_secret_cmd.c_str());
+        test.maxscales->ssh_node_f(0, true, "%s", chown_2fa_secret_cmd.c_str());
     };
 
     cleanup(); // remove conflicting usernames and files, just in case.
@@ -201,7 +205,7 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
 
     bool rval = false;
     // Using two passwords is a bit tricky as connector-c does not have a setting for it. Instead, invoke
-    // mysql from the commandline.
+    // a java app from the commandline.
     auto url = mxb::string_printf("jdbc:mariadb://%s:%i/?user=%s&password=%s&password2=%s",
                                   host, port, user.c_str(), pass.c_str(), pass2.c_str());
     auto java_cmd = mxb::string_printf("java -jar ConnectionTester.jar '%s'", url.c_str());
