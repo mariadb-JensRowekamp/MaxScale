@@ -25,7 +25,7 @@ using mxt::ServerInfo;
 
 // Helper function for checking PAM-login. If db is empty, log to null database.
 bool test_pam_login(TestConnections& test, int port, const string& user, const string& pass,
-                    const string& pass2, const string& database);
+                    const string& pass2);
 
 string generate_2fa_token(TestConnections& test, const string& secret);
 
@@ -43,6 +43,11 @@ int main(int argc, char** argv)
     const char pam_pw[] = "twofactor_pass";
     const char pam_config_name[] = "twofactor_conf";
 
+    // The authenticator secret file needs to be owned by the process doing the authentication (either
+    // "maxscale" or "mysql". Also, the user to change to needs to be set in pam config.
+    const char maxscale_user[] = "maxscale";
+    const char mysql_user[] = "mysql";
+
     const string add_user_cmd = (string)"useradd " + pam_user;
     const string add_pw_cmd = mxb::string_printf("printf \"%s:%s\" | chpasswd", pam_user, pam_pw);
     const string read_shadow = "chmod o+r /etc/shadow";
@@ -50,15 +55,18 @@ int main(int argc, char** argv)
     const string remove_user_cmd = (string)"userdel --remove " + pam_user;
     const string read_shadow_off = "chmod o-r /etc/shadow";
 
-    const string pam_config_file = (string)"/etc/pam.d/" + pam_config_name;
+    const string pam_config_file_path = (string)"/etc/pam.d/" + pam_config_name;
 
     // Use a somewhat non-standard pam config. Does not affect the validity of the test, as we are not
     // testing the security of the google authenticator itself.
-    const string pam_config_contents = R"(
+    const char pam_config_contents_fmt[] = R"(
 auth            required        pam_unix.so
-auth            required        pam_google_authenticator.so nullok allowed_perm=0777 secret=/tmp/.google_authenticator
+auth            required        pam_google_authenticator.so nullok user=%s allowed_perm=0777 secret=/tmp/.google_authenticator
 account         required        pam_unix.so
 )";
+
+    const string pam_config_mxs_contents = string_printf(pam_config_contents_fmt, maxscale_user);
+    const string pam_config_srv_contents = string_printf(pam_config_contents_fmt, mysql_user);
 
     const string gauth_secret_key = "3C7OP37ONKJOELVIMNZ67AADSY";
     const string gauth_keyfile_contents = gauth_secret_key + "\n" +
@@ -72,13 +80,16 @@ R"(\" RATE_LIMIT 3 30
     const char gauth_secret_path[] = "/tmp/.google_authenticator";
 
     const char write_file_fmt[] = "printf \"%s\" > %s";
-    const string create_pam_conf_cmd = string_printf(write_file_fmt,
-                                                     pam_config_contents.c_str(), pam_config_file.c_str());
-    const string delete_pam_conf_cmd = "rm -f " + pam_config_file;
+    const string create_pam_conf_mxs_cmd = string_printf(write_file_fmt, pam_config_mxs_contents.c_str(),
+                                                         pam_config_file_path.c_str());
+    const string create_pam_conf_srv_cmd = string_printf(write_file_fmt, pam_config_srv_contents.c_str(),
+                                                         pam_config_file_path.c_str());
+    const string delete_pam_conf_cmd = "rm -f " + pam_config_file_path;
 
     const string create_2fa_secret_cmd = string_printf(write_file_fmt,
                                                        gauth_keyfile_contents.c_str(), gauth_secret_path);
-    const string chown_2fa_secret_cmd = string_printf("chown %s %s", pam_user, gauth_secret_path);
+    const string chown_2fa_secret_mxs_cmd = string_printf("chown %s %s", maxscale_user, gauth_secret_path);
+    const string chown_2fa_secret_srv_cmd = string_printf("chown %s %s", mysql_user, gauth_secret_path);
     const string delete_2fa_secret_cmd = (string)"rm -f " + gauth_secret_path;
 
     const int N = 2;
@@ -102,8 +113,8 @@ R"(\" RATE_LIMIT 3 30
     };
 
     auto initialize = [&]() {
-        // Setup pam 2fa on the MaxScale node + on two MariaDB-nodes. Quite similar to
-        // pam_authentication test.
+        // Setup pam 2fa on the MaxScale node + on two MariaDB-nodes. The configs are slightly different
+        // on the two machine types.
         for (int i = 0; i < N; i++)
         {
             MYSQL* conn = test.repl->nodes[i];
@@ -111,9 +122,9 @@ R"(\" RATE_LIMIT 3 30
             test.repl->ssh_node_f(i, true, "%s", add_user_cmd.c_str());
             test.repl->ssh_node_f(i, true, "%s", add_pw_cmd.c_str());
             test.repl->ssh_node_f(i, true, "%s", read_shadow.c_str());
-            test.repl->ssh_node_f(i, true, "%s", create_pam_conf_cmd.c_str());
+            test.repl->ssh_node_f(i, true, "%s", create_pam_conf_srv_cmd.c_str());
             test.repl->ssh_node_f(i, true, "%s", create_2fa_secret_cmd.c_str());
-            test.repl->ssh_node_f(i, true, "%s", chown_2fa_secret_cmd.c_str());
+            test.repl->ssh_node_f(i, true, "%s", chown_2fa_secret_srv_cmd.c_str());
         }
 
         // Create the user on the node running MaxScale, as the MaxScale PAM plugin compares against
@@ -121,9 +132,9 @@ R"(\" RATE_LIMIT 3 30
         test.maxscales->ssh_node_f(0, true, "%s", add_user_cmd.c_str());
         test.maxscales->ssh_node_f(0, true, "%s", add_pw_cmd.c_str());
         test.maxscales->ssh_node_f(0, true, "%s", read_shadow.c_str());
-        test.maxscales->ssh_node_f(0, true, "%s", create_pam_conf_cmd.c_str());
+        test.maxscales->ssh_node_f(0, true, "%s", create_pam_conf_mxs_cmd.c_str());
         test.maxscales->ssh_node_f(0, true, "%s", create_2fa_secret_cmd.c_str());
-        test.maxscales->ssh_node_f(0, true, "%s", chown_2fa_secret_cmd.c_str());
+        test.maxscales->ssh_node_f(0, true, "%s", chown_2fa_secret_mxs_cmd.c_str());
     };
 
     cleanup(); // remove conflicting usernames and files, just in case.
@@ -159,11 +170,14 @@ R"(\" RATE_LIMIT 3 30
                 auto twofa_token = generate_2fa_token(test, gauth_secret_key);
                 if (!twofa_token.empty())
                 {
-                    auto succ = test_pam_login(test, test.maxscales->port(), pam_user, pam_pw, twofa_token,
-                                               "");
-                    if (succ)
+                    auto succ = test_pam_login(test, test.maxscales->port(), pam_user, pam_pw, twofa_token);
+                    test.expect(succ, "Two-factor login failed");
+                    if (test.ok())
                     {
-                        cout << "JEEEEE\n";
+                        test.tprintf("Try an invalid 2FA-code");
+                        succ = test_pam_login(test, test.maxscales->port(), pam_user, pam_pw,
+                                              twofa_token + "1");
+                        test.expect(!succ, "Two-factor login succeeded when it should have failed");
                     }
                 }
             }
@@ -184,24 +198,12 @@ R"(\" RATE_LIMIT 3 30
 
 // Helper function for checking PAM-login. If db is empty, log to null database.
 bool test_pam_login(TestConnections& test, int port, const string& user, const string& pass,
-                    const string& pass2, const string& database)
+                    const string& pass2)
 {
     const char* host = test.maxscales->ip4(0);
-    const char* db = nullptr;
-    if (!database.empty())
-    {
-        db = database.c_str();
-    }
 
-    if (db)
-    {
-        test.tprintf("Trying to log in to [%s]:%i as %s with database %s.\n", host, port, user.c_str(), db);
-    }
-    else
-    {
-        test.tprintf("Trying to log in to [%s]:%i as %s, with passwords '%s' and '%s'.\n",
-               host, port, user.c_str(), pass.c_str(), pass2.c_str());
-    }
+    test.tprintf("Trying to log in to [%s]:%i as %s, with passwords '%s' and '%s'.\n",
+           host, port, user.c_str(), pass.c_str(), pass2.c_str());
 
     bool rval = false;
     // Using two passwords is a bit tricky as connector-c does not have a setting for it. Instead, invoke
@@ -213,26 +215,23 @@ bool test_pam_login(TestConnections& test, int port, const string& user, const s
     if (file)
     {
         sleep(2);
-        char buffer[10240];
-        size_t rsize = sizeof(buffer);
-        auto result = (char*)calloc(rsize, sizeof(char));
+        char buffer[512] {0};
+        string output;
 
         while (fgets(buffer, sizeof(buffer), file))
         {
-            result = (char*)realloc(result, sizeof(buffer) + rsize);
-            rsize += sizeof(buffer);
-            strcat(result, buffer);
+            output += buffer;
         }
 
         int rc = pclose(file);
         if (rc == 0)
         {
             rval = true;
-            cout << "Logged in and queried successfully.\n";
+            test.tprintf("Logged in and queried successfully.");
         }
         else
         {
-            cout << "Login failed \n";
+            test.tprintf("Login failed");
         }
     }
     return rval;
@@ -251,6 +250,7 @@ string generate_2fa_token(TestConnections& test, const string& secret)
         memset(buf, 0, n);
         fgets(buf, n - 1, stream);
         int rc = pclose(stream);
+        test.expect(rc == 0, "Command '%s' returned %i", cmd.c_str(), rc);
         // 2FA tokens are six numbers long.
         int output_len = strlen(buf);
         int token_len = 6;
