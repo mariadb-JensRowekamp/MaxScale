@@ -20,6 +20,7 @@
 #include <maxscale/secrets.hh>
 #include <maxscale/sqlite3.h>
 #include "../../../core/internal/config_runtime.hh"
+#include "../../../core/internal/server.hh"
 #include "../../../core/internal/service.hh"
 
 namespace http = mxb::http;
@@ -634,7 +635,34 @@ bool XpandMonitor::refresh_nodes(MYSQL* pHub_con)
                         if (nit != m_nodes_by_id.end())
                         {
                             // Existing node.
-                            mxb_assert(SERVER::find_by_unique_name(server_name));
+                            Server* pServer = static_cast<Server*>(SERVER::find_by_unique_name(server_name));
+                            mxb_assert(pServer);
+
+                            if (pServer)
+                            {
+                                if (pServer->address() != ip)
+                                {
+                                    MXS_WARNING("Address of '%s' has changed from '%s' to '%s', updating.",
+                                                server_name.c_str(),
+                                                pServer->address(),
+                                                ip.c_str());
+                                    pServer->set_address(ip);
+                                }
+
+                                if (pServer->port() != mysql_port)
+                                {
+                                    MXS_WARNING("Port of '%s' has changed from '%d' to '%d', updating.",
+                                                server_name.c_str(),
+                                                pServer->port(),
+                                                mysql_port);
+                                    pServer->set_port(mysql_port);
+                                }
+                            }
+                            else
+                            {
+                                // This really shouldn't happen.
+                                MXS_ERROR("Server object for node '%d' was not found.", id);
+                            }
 
                             XpandNode& node = nit->second;
 
